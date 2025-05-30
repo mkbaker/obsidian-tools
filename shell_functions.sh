@@ -4,7 +4,12 @@
 
 # Weekly notes archiving function
 archive-notes() {
-    local script_path="/Users/kellen.baker/Code/obsidian_tools/weekly_notes_archiver.py"
+    if [[ -z "$OBSIDIAN_TOOLS_PATH" ]]; then
+        echo "❌ OBSIDIAN_TOOLS_PATH environment variable is not set."
+        echo "Please set it to the directory containing weekly_notes_archiver.py."
+        return 1
+    fi
+    local script_path="${OBSIDIAN_TOOLS_PATH}/weekly_notes_archiver.py"
 
     case "$1" in
         "")
