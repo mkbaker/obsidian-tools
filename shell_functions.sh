@@ -4,12 +4,7 @@
 
 # Weekly notes archiving function
 archive-notes() {
-    if [[ -z "$OBSIDIAN_TOOLS_PATH" ]]; then
-        echo "❌ OBSIDIAN_TOOLS_PATH environment variable is not set."
-        echo "Please set it to the directory containing weekly_notes_archiver.py."
-        return 1
-    fi
-    local script_path="${OBSIDIAN_TOOLS_PATH}/weekly_notes_archiver.py"
+    local script_path="/Users/kellen.baker/Code/obsidian_tools/weekly_notes_archiver.py"
 
     case "$1" in
         "")
@@ -114,7 +109,55 @@ if [[ -n "$ZSH_VERSION" ]] && command -v compdef >/dev/null 2>&1; then
     compdef _archive_notes_completion archive-notes
 fi
 
+# Todo migration function
+migrate-todos() {
+    local script_path="/Users/kellen.baker/Code/obsidian_tools/todo_migrator.py"
+
+    case "$1" in
+        "")
+            # Default: migrate yesterday's todos to today
+            python3 "$script_path"
+            ;;
+        "dry")
+            python3 "$script_path" --dry-run
+            ;;
+        "help"|"-h"|"--help")
+            echo "📋 Todo Migrator"
+            echo "Usage: migrate-todos [OPTION]"
+            echo ""
+            echo "Options:"
+            echo "  (none)         Migrate yesterday's todos to today (default)"
+            echo "  dry            Preview migration without making changes"
+            echo "  from DATE      Migrate from specific date to today"
+            echo "  help           Show this help message"
+            echo ""
+            echo "Examples:"
+            echo "  migrate-todos              # Migrate yesterday -> today"
+            echo "  migrate-todos dry          # Preview migration"
+            echo "  migrate-todos from 2025-08-01  # Migrate from Aug 1 to today"
+            echo ""
+            echo "Short aliases: mt, mtd"
+            ;;
+        "from")
+            if [[ -n "$2" ]]; then
+                python3 "$script_path" --from "$2"
+            else
+                echo "❌ Please specify a date: migrate-todos from YYYY-MM-DD"
+                return 1
+            fi
+            ;;
+        *)
+            echo "❌ Unknown option: $1"
+            echo "Run 'migrate-todos help' for usage information."
+            return 1
+            ;;
+    esac
+}
+
+# Short aliases for todo migration
+alias mt='migrate-todos'
+alias mtd='migrate-todos dry'
+
 # Future obsidian tools can be added here...
-# Example placeholder for future tools:
 # obsidian-export() { ... }
 # obsidian-backup() { ... }
