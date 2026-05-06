@@ -158,6 +158,26 @@ migrate-todos() {
 alias mt='migrate-todos'
 alias mtd='migrate-todos dry'
 
-# Future obsidian tools can be added here...
-# obsidian-export() { ... }
-# obsidian-backup() { ... }
+# Good Morning workflow
+good-morning() {
+    local script_path="/Users/kellen.baker/Code/obsidian_tools/good_morning.py"
+    python3 "$script_path" "$@"
+}
+
+alias gm='good-morning'
+alias gmnw='good-morning --new-week'
+
+# Wrap-up workflow
+wrap-up() {
+    local script_path="/Users/kellen.baker/Code/obsidian_tools/wrap_up.py"
+    python3 "$script_path" "$@"
+}
+
+alias wu='wrap-up'
+alias wuw='wrap-up --weekly'
+
+# Weekly summary (standalone)
+weekly-summary() {
+    local script_path="/Users/kellen.baker/Code/obsidian_tools/weekly_summary.py"
+    python3 "$script_path" "$@"
+}
