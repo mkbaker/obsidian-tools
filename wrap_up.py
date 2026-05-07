@@ -56,7 +56,9 @@ class WrapUp:
                 continue
             prompt = (
                 f"Here is an Obsidian note titled '{stem}':\n\n{content}\n\n"
-                "In 1-2 sentences, describe what this note is about. Be specific and concise."
+                "In 1-2 sentences, describe what this note is about. Be specific and concise. "
+                "Where applicable, use Obsidian wiki-link syntax [[like this]] to reference "
+                "tickets, people, or related notes mentioned in the content."
             )
             summary, model = call_llm(prompt, self.use_claude, self.use_sonnet, self.ollama_model)
             results.append((stem, summary, model))
@@ -149,7 +151,9 @@ query {{
     def summarize_github(self, activity_text):
         prompt = (
             f"Here is my GitHub activity for today:\n\n{activity_text}\n\n"
-            "Summarize in 3-5 sentences what I worked on. Be concise and specific."
+            "Summarize as 3-5 bullet points what I worked on. Be concise and specific. "
+            "Where applicable, use Obsidian wiki-link syntax [[like this]] to reference "
+            "tickets, repos, or projects that likely have their own notes."
         )
         return call_llm(prompt, self.use_claude, self.use_sonnet, self.ollama_model)
 
@@ -167,7 +171,7 @@ query {{
                 section += f"- [[{stem}]] — {summary}\n"
 
         if github_summary:
-            section += f"\n**GitHub activity:** {github_summary}\n"
+            section += f"\n**GitHub activity:**\n{github_summary}\n"
 
         all_models = list(dict.fromkeys(
             [m for _, _, m in note_summaries] + ([github_model] if github_model else [])
