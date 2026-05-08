@@ -87,16 +87,16 @@ query {{
         repository {{ nameWithOwner }}
         contributions {{ totalCount }}
       }}
-      pullRequestContributions(first: 20) {{
-        nodes {{
-          pullRequest {{ title number repository {{ nameWithOwner }} state }}
-        }}
-      }}
       pullRequestReviewContributions(first: 20) {{
         nodes {{
           pullRequest {{ title number repository {{ nameWithOwner }} }}
         }}
       }}
+    }}
+  }}
+  mergedPRs: search(query: "author:{username} type:pr merged:{date_str}", type: ISSUE, first: 20) {{
+    nodes {{
+      ... on PullRequest {{ title number repository {{ nameWithOwner }} state }}
     }}
   }}
 }}
@@ -110,7 +110,9 @@ query {{
                 return None
 
             data = json.loads(result.stdout)
-            return data['data']['user']['contributionsCollection']
+            contributions = data['data']['user']['contributionsCollection']
+            contributions['mergedPRs'] = data['data']['mergedPRs']['nodes']
+            return contributions
         except Exception as e:
             print(f"  Warning: GitHub activity fetch failed: {e}")
             return None
@@ -126,13 +128,12 @@ query {{
                 count = entry['contributions']['totalCount']
                 lines.append(f"  - {count} commit(s) to {repo}")
 
-        prs = activity.get('pullRequestContributions', {}).get('nodes', [])
+        prs = activity.get('mergedPRs', [])
         if prs:
-            lines.append("Pull requests:")
-            for node in prs:
-                pr = node['pullRequest']
+            lines.append("Pull requests merged:")
+            for pr in prs:
                 lines.append(
-                    f"  - [{pr['state']}] {pr['repository']['nameWithOwner']}"
+                    f"  - {pr['repository']['nameWithOwner']}"
                     f"#{pr['number']}: {pr['title']}"
                 )
 
