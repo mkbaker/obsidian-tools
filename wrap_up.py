@@ -65,9 +65,13 @@ class WrapUp:
         return results
 
     def fetch_github_activity(self):
+        from datetime import timezone as tz
         date_str = self.today.strftime("%Y-%m-%d")
-        from_dt = f"{date_str}T00:00:00Z"
-        to_dt = f"{date_str}T23:59:59Z"
+        # Convert local midnight/end-of-day to UTC so contributions aren't cut off
+        local_start = self.today.replace(hour=0, minute=0, second=0, microsecond=0)
+        local_end = self.today.replace(hour=23, minute=59, second=59, microsecond=0)
+        from_dt = local_start.astimezone(tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        to_dt = local_end.astimezone(tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         try:
             username_result = subprocess.run(
@@ -87,6 +91,11 @@ query {{
         repository {{ nameWithOwner }}
         contributions {{ totalCount }}
       }}
+      pullRequestContributions(first: 20) {{
+        nodes {{
+          pullRequest {{ title number repository {{ nameWithOwner }} state isDraft }}
+        }}
+      }}
       pullRequestReviewContributions(first: 20) {{
         nodes {{
           pullRequest {{ title number repository {{ nameWithOwner }} }}
@@ -97,6 +106,11 @@ query {{
   mergedPRs: search(query: "author:{username} type:pr merged:{date_str}", type: ISSUE, first: 20) {{
     nodes {{
       ... on PullRequest {{ title number repository {{ nameWithOwner }} state }}
+    }}
+  }}
+  openedPRs: search(query: "author:{username} type:pr created:{date_str}", type: ISSUE, first: 20) {{
+    nodes {{
+      ... on PullRequest {{ title number repository {{ nameWithOwner }} state isDraft }}
     }}
   }}
 }}
@@ -112,6 +126,13 @@ query {{
             data = json.loads(result.stdout)
             contributions = data['data']['user']['contributionsCollection']
             contributions['mergedPRs'] = data['data']['mergedPRs']['nodes']
+            # Merge openedPRs, deduping against anything already in pullRequestContributions
+            opened = data['data']['openedPRs']['nodes']
+            existing_nums = {
+                n['pullRequest']['number']
+                for n in contributions.get('pullRequestContributions', {}).get('nodes', [])
+            }
+            contributions['openedPRs'] = [p for p in opened if p['number'] not in existing_nums]
             return contributions
         except Exception as e:
             print(f"  Warning: GitHub activity fetch failed: {e}")
@@ -127,6 +148,18 @@ query {{
                 repo = entry['repository']['nameWithOwner']
                 count = entry['contributions']['totalCount']
                 lines.append(f"  - {count} commit(s) to {repo}")
+
+        opened_from_contributions = activity.get('pullRequestContributions', {}).get('nodes', [])
+        opened_from_search = activity.get('openedPRs', [])
+        all_opened = [n['pullRequest'] for n in opened_from_contributions] + opened_from_search
+        if all_opened:
+            lines.append("Pull requests opened:")
+            for pr in all_opened:
+                draft_tag = " [draft]" if pr.get('isDraft') else ""
+                lines.append(
+                    f"  - {pr['repository']['nameWithOwner']}"
+                    f"#{pr['number']}: {pr['title']}{draft_tag}"
+                )
 
         prs = activity.get('mergedPRs', [])
         if prs:
