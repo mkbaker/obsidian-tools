@@ -8,9 +8,9 @@ import sys
 DEFAULT_MODEL = "haiku"
 
 
-def call_llm(prompt, use_sonnet=False, use_claude=False, ollama_model=None):
+def call_llm(prompt, use_sonnet=False, use_claude=False, ollama_model=None, model=None):
     """Call Claude CLI. Returns (text, model_label)."""
-    model = DEFAULT_MODEL
+    model = model or DEFAULT_MODEL
     label = f"claude/{model}"
     print(f"  Using {label}")
 

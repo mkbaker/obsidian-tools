@@ -60,7 +60,7 @@ class WrapUp:
                 "Where applicable, use Obsidian wiki-link syntax [[like this]] to reference "
                 "tickets, people, or related notes mentioned in the content."
             )
-            summary, model = call_llm(prompt, self.use_claude, self.use_sonnet, self.ollama_model)
+            summary, model = call_llm(prompt, self.use_claude, self.use_sonnet, self.ollama_model, model="sonnet")
             results.append((stem, summary, model))
         return results
 
@@ -189,7 +189,7 @@ query {{
             "Where applicable, use Obsidian wiki-link syntax [[like this]] to reference "
             "tickets, repos, or projects that likely have their own notes."
         )
-        return call_llm(prompt, self.use_claude, self.use_sonnet, self.ollama_model)
+        return call_llm(prompt, self.use_claude, self.use_sonnet, self.ollama_model, model="sonnet")
 
     def append_wrapup(self, today_path, note_summaries, github_summary, github_model):
         content = today_path.read_text(encoding='utf-8')
