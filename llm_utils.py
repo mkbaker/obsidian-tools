@@ -5,7 +5,7 @@ import os
 import subprocess
 import sys
 
-DEFAULT_MODEL = "sonnet"
+DEFAULT_MODEL = "haiku"
 
 
 def call_llm(prompt, use_sonnet=False, use_claude=False, ollama_model=None):

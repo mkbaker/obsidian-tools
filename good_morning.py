@@ -4,6 +4,7 @@ Good Morning workflow for Obsidian daily notes.
 Migrates todos, summarizes yesterday, and on Mondays (or --new-week) recaps the week.
 """
 
+import re
 import sys
 import argparse
 from datetime import datetime, timedelta
@@ -49,12 +50,34 @@ class GoodMorning:
         except IOError:
             return None
 
+    def strip_morning_brief(self, content):
+        """Remove the Morning Brief section so the LLM only sees actual work logged that day."""
+        lines = content.split('\n')
+        in_brief = False
+        result = []
+        for line in lines:
+            if re.match(r'^##\s+Morning Brief', line):
+                in_brief = True
+                continue
+            if in_brief and re.match(r'^---\s*$', line):
+                in_brief = False
+                continue
+            if not in_brief:
+                result.append(line)
+        return '\n'.join(result).strip()
+
     def summarize_day(self, date, content):
+        stripped = self.strip_morning_brief(content)
+        if not stripped:
+            return None, None
         prompt = (
             f"Here is my daily note from {date.strftime('%A, %B %d, %Y')}:\n\n"
-            f"{content}\n\n"
-            "Summarize as 3-5 bullet points: what was worked on, what was completed, "
-            "and what remains open. Be concise and specific. "
+            f"{stripped}\n\n"
+            "Summarize as 3-5 bullet points what was actually worked on or completed that day. "
+            "Focus only on work logged in this note (meeting notes, wrap-up, ideas, etc.) — "
+            "do NOT include anything from a Morning Brief or prior-day recap. "
+            "If there is nothing substantive logged, say so in one bullet. "
+            "Be concise and specific. "
             "Where applicable, use Obsidian wiki-link syntax to reference relevant notes — "
             "for example, ticket IDs like [[FINC-3649]], people, or projects that likely have their own notes."
         )
@@ -63,7 +86,9 @@ class GoodMorning:
     def summarize_week(self, notes_by_date):
         combined = ""
         for date in sorted(notes_by_date):
-            combined += f"\n\n### {date.strftime('%A, %B %d')}\n{notes_by_date[date]}"
+            stripped = self.strip_morning_brief(notes_by_date[date])
+            if stripped:
+                combined += f"\n\n### {date.strftime('%A, %B %d')}\n{stripped}"
         prompt = (
             f"Here are my daily notes from last week:\n{combined}\n\n"
             "Summarize in 5-8 sentences: main themes, key accomplishments, "
