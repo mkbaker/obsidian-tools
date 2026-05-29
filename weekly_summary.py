@@ -62,7 +62,9 @@ class WeeklySummary:
         prompt = (
             f"Here are my daily notes from this week:\n{combined}\n\n"
             "Summarize in 5-8 sentences: main themes, key accomplishments, "
-            "and items carried forward. Be concise and specific."
+            "and items carried forward. Be concise and specific. "
+            "Where applicable, use Obsidian wiki-link syntax [[like this]] to reference "
+            "ticket IDs, people, projects, or other notes mentioned in the content."
         )
         return call_llm(prompt, self.use_claude, self.use_sonnet, self.ollama_model, model="sonnet")
 
