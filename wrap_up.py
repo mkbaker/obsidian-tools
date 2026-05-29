@@ -63,13 +63,8 @@ class WrapUp:
         return results
 
     def fetch_github_activity(self):
-        from datetime import timezone as tz
         date_str = self.today.strftime("%Y-%m-%d")
-        # Convert local midnight/end-of-day to UTC so contributions aren't cut off
-        local_start = self.today.replace(hour=0, minute=0, second=0, microsecond=0)
-        local_end = self.today.replace(hour=23, minute=59, second=59, microsecond=0)
-        from_dt = local_start.astimezone(tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        to_dt = local_end.astimezone(tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        today_date = self.today.date()
 
         try:
             username_result = subprocess.run(
@@ -81,26 +76,80 @@ class WrapUp:
                 return None
             username = username_result.stdout.strip()
 
+            # Events API is real-time; contributionsCollection has cache lag
+            events = []
+            done = False
+            for page in range(1, 4):
+                result = subprocess.run(
+                    ["gh", "api", f"/users/{username}/events?per_page=100&page={page}"],
+                    capture_output=True, text=True, timeout=30
+                )
+                if result.returncode != 0 or not result.stdout.strip():
+                    break
+                page_events = json.loads(result.stdout)
+                if not page_events:
+                    break
+                for event in page_events:
+                    event_date = datetime.fromisoformat(
+                        event['created_at'].replace('Z', '+00:00')
+                    ).astimezone().date()
+                    if event_date == today_date:
+                        events.append(event)
+                    elif event_date < today_date:
+                        done = True
+                        break
+                if done:
+                    break
+
+            # Aggregate pushes by repo. Private repo events omit commits/size, so track push count as fallback.
+            pushes_by_repo = {}  # {repo: {'commits': int, 'pushes': int}}
+            for event in events:
+                if event['type'] == 'PushEvent':
+                    repo = event['repo']['name']
+                    entry = pushes_by_repo.setdefault(repo, {'commits': 0, 'pushes': 0})
+                    entry['pushes'] += 1
+                    commit_count = event['payload'].get('size', len(event['payload'].get('commits', [])))
+                    entry['commits'] += commit_count
+
+            commit_contributions = [
+                {
+                    'repository': {'nameWithOwner': repo},
+                    'contributions': {
+                        'totalCount': data['commits'] if data['commits'] > 0 else data['pushes'],
+                        'unit': 'commits' if data['commits'] > 0 else 'pushes',
+                    },
+                }
+                for repo, data in pushes_by_repo.items()
+            ]
+
+            # New repositories created today
+            created_repos = [
+                event['repo']['name']
+                for event in events
+                if event['type'] == 'CreateEvent'
+                and event['payload'].get('ref_type') == 'repository'
+            ]
+
+            # PR reviews from events (deduped by repo+number)
+            seen_reviews = set()
+            review_contributions = []
+            for event in events:
+                if event['type'] == 'PullRequestReviewEvent':
+                    pr = event['payload'].get('pull_request', {})
+                    key = f"{event['repo']['name']}#{pr.get('number')}"
+                    if key not in seen_reviews:
+                        seen_reviews.add(key)
+                        review_contributions.append({
+                            'pullRequest': {
+                                'title': pr.get('title', ''),
+                                'number': pr.get('number'),
+                                'repository': {'nameWithOwner': event['repo']['name']},
+                            }
+                        })
+
+            # Search queries for opened/merged PRs (accurate, not subject to events lag)
             query = f"""
 query {{
-  user(login: "{username}") {{
-    contributionsCollection(from: "{from_dt}", to: "{to_dt}") {{
-      commitContributionsByRepository(maxRepositories: 25) {{
-        repository {{ nameWithOwner }}
-        contributions {{ totalCount }}
-      }}
-      pullRequestContributions(first: 20) {{
-        nodes {{
-          pullRequest {{ title number repository {{ nameWithOwner }} state isDraft }}
-        }}
-      }}
-      pullRequestReviewContributions(first: 20) {{
-        nodes {{
-          pullRequest {{ title number repository {{ nameWithOwner }} }}
-        }}
-      }}
-    }}
-  }}
   mergedPRs: search(query: "author:{username} type:pr merged:{date_str}", type: ISSUE, first: 20) {{
     nodes {{
       ... on PullRequest {{ title number repository {{ nameWithOwner }} state }}
@@ -119,19 +168,19 @@ query {{
             )
             if result.returncode != 0:
                 print(f"  Warning: gh GraphQL query failed: {result.stderr.strip()}")
-                return None
+                merged_prs, opened_prs = [], []
+            else:
+                data = json.loads(result.stdout)
+                merged_prs = data['data']['mergedPRs']['nodes']
+                opened_prs = data['data']['openedPRs']['nodes']
 
-            data = json.loads(result.stdout)
-            contributions = data['data']['user']['contributionsCollection']
-            contributions['mergedPRs'] = data['data']['mergedPRs']['nodes']
-            # Merge openedPRs, deduping against anything already in pullRequestContributions
-            opened = data['data']['openedPRs']['nodes']
-            existing_nums = {
-                n['pullRequest']['number']
-                for n in contributions.get('pullRequestContributions', {}).get('nodes', [])
+            return {
+                'commitContributionsByRepository': commit_contributions,
+                'createdRepos': created_repos,
+                'pullRequestReviewContributions': {'nodes': review_contributions},
+                'mergedPRs': merged_prs,
+                'openedPRs': opened_prs,
             }
-            contributions['openedPRs'] = [p for p in opened if p['number'] not in existing_nums]
-            return contributions
         except Exception as e:
             print(f"  Warning: GitHub activity fetch failed: {e}")
             return None
@@ -139,30 +188,35 @@ query {{
     def format_github_context(self, activity):
         lines = []
 
+        created = activity.get('createdRepos', [])
+        if created:
+            lines.append("Repositories created:")
+            for repo in created:
+                lines.append(f"  - {repo}")
+
         commits = activity.get('commitContributionsByRepository', [])
         if commits:
             lines.append("Commits:")
             for entry in commits:
                 repo = entry['repository']['nameWithOwner']
                 count = entry['contributions']['totalCount']
-                lines.append(f"  - {count} commit(s) to {repo}")
+                unit = entry['contributions'].get('unit', 'commits')
+                lines.append(f"  - {count} {unit} to {repo}")
 
-        opened_from_contributions = activity.get('pullRequestContributions', {}).get('nodes', [])
-        opened_from_search = activity.get('openedPRs', [])
-        all_opened = [n['pullRequest'] for n in opened_from_contributions] + opened_from_search
-        if all_opened:
+        opened_prs = activity.get('openedPRs', [])
+        if opened_prs:
             lines.append("Pull requests opened:")
-            for pr in all_opened:
+            for pr in opened_prs:
                 draft_tag = " [draft]" if pr.get('isDraft') else ""
                 lines.append(
                     f"  - {pr['repository']['nameWithOwner']}"
                     f"#{pr['number']}: {pr['title']}{draft_tag}"
                 )
 
-        prs = activity.get('mergedPRs', [])
-        if prs:
+        merged_prs = activity.get('mergedPRs', [])
+        if merged_prs:
             lines.append("Pull requests merged:")
-            for pr in prs:
+            for pr in merged_prs:
                 lines.append(
                     f"  - {pr['repository']['nameWithOwner']}"
                     f"#{pr['number']}: {pr['title']}"
