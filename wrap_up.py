@@ -38,8 +38,6 @@ class WrapUp:
         for p in self.vault_path.rglob("*.md"):
             if "4 ARCHIVE" in str(p):
                 continue
-            if p.resolve() == daily_note:
-                continue
             if datetime.fromtimestamp(p.stat().st_mtime).date() == today_date:
                 edited.append(p)
         return sorted(edited)

@@ -64,7 +64,7 @@ class WeeklySummary:
             "Summarize in 5-8 sentences: main themes, key accomplishments, "
             "and items carried forward. Be concise and specific."
         )
-        return call_llm(prompt, self.use_claude, self.use_sonnet, self.ollama_model)
+        return call_llm(prompt, self.use_claude, self.use_sonnet, self.ollama_model, model="sonnet")
 
     def write_summary(self, monday, summary_text, model_label):
         filename = f"Weekly Summary {monday.strftime('%Y-%m-%d')}.md"
