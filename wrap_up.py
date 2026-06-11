@@ -6,11 +6,15 @@ Triggers weekly summary on Fridays (or --weekly flag).
 """
 
 import json
+import re
+import shutil
 import subprocess
 import sys
 import argparse
 from datetime import datetime
 from pathlib import Path
+
+TICKET_RE = re.compile(r'([A-Za-z]{2,}-\d+)')
 
 sys.path.insert(0, str(Path(__file__).parent))
 from todo_migrator import TodoMigrator
@@ -152,7 +156,7 @@ class WrapUp:
 query {{
   mergedPRs: search(query: "author:{username} type:pr merged:{date_str}", type: ISSUE, first: 20) {{
     nodes {{
-      ... on PullRequest {{ title number repository {{ nameWithOwner }} state }}
+      ... on PullRequest {{ title number repository {{ nameWithOwner }} state headRefName }}
     }}
   }}
   openedPRs: search(query: "author:{username} type:pr created:{date_str}", type: ISSUE, first: 20) {{
@@ -234,6 +238,46 @@ query {{
 
         return '\n'.join(lines) if lines else None
 
+    def find_story_note(self, ticket):
+        """Find a story note file/folder for a ticket key, anywhere outside the archive."""
+        for pattern in (ticket, ticket.lower()):
+            for p in self.vault_path.rglob(f"{pattern}*"):
+                if "4 ARCHIVE" in str(p):
+                    continue
+                return p
+        return None
+
+    def archive_merged_stories(self, merged_prs):
+        """Move story notes whose ticket matches a branch merged today into 4 ARCHIVE/Stories."""
+        archived = []
+        dest_dir = self.vault_path / "4 ARCHIVE" / "Stories"
+
+        for pr in merged_prs:
+            branch = pr.get('headRefName', '')
+            match = TICKET_RE.search(branch)
+            if not match:
+                continue
+            ticket = match.group(1).upper()
+
+            note_path = self.find_story_note(ticket)
+            if not note_path:
+                continue
+
+            dest = dest_dir / note_path.name
+            if dest.exists():
+                continue
+
+            if self.dry_run:
+                print(f"  [dry-run] Would archive [[{note_path.stem}]] ({note_path.name}, branch {branch} merged)")
+            else:
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(note_path), str(dest))
+                print(f"  📦 Archived [[{note_path.stem}]] (branch {branch} merged)")
+
+            archived.append((note_path.stem, pr))
+
+        return archived
+
     def summarize_github(self, activity_text):
         prompt = (
             f"Here is my GitHub activity for today:\n\n{activity_text}\n\n"
@@ -243,7 +287,7 @@ query {{
         )
         return call_llm(prompt, self.use_claude, self.use_sonnet, self.ollama_model, model="sonnet")
 
-    def append_wrapup(self, today_path, note_summaries, github_summary, github_model):
+    def append_wrapup(self, today_path, note_summaries, github_summary, github_model, archived_stories=None):
         content = today_path.read_text(encoding='utf-8')
         if '## Wrap-up' in content:
             print("  ## Wrap-up already exists in today's note, skipping")
@@ -258,6 +302,11 @@ query {{
 
         if github_summary:
             section += f"\n**GitHub activity:**\n{github_summary}\n"
+
+        if archived_stories:
+            section += "\n**Stories archived (branch merged):**\n"
+            for stem, pr in archived_stories:
+                section += f"- [[{stem}]] — {pr['repository']['nameWithOwner']}#{pr['number']}\n"
 
         all_models = list(dict.fromkeys(
             [m for _, _, m in note_summaries] + ([github_model] if github_model else [])
@@ -302,6 +351,7 @@ query {{
         # GitHub activity
         print("\n🐙 Fetching GitHub activity...")
         github_summary = github_model = None
+        archived_stories = []
 
         if self.dry_run:
             print("  [dry-run] Would fetch GitHub activity")
@@ -314,6 +364,13 @@ query {{
                     github_summary, github_model = self.summarize_github(activity_text)
                 else:
                     print("  No GitHub activity found today")
+
+                merged_prs = activity.get('mergedPRs', [])
+                if merged_prs:
+                    print("\n📦 Checking for merged-branch stories to archive...")
+                    archived_stories = self.archive_merged_stories(merged_prs)
+                    if not archived_stories:
+                        print("  None found")
             else:
                 print("  GitHub activity unavailable, skipping")
 
@@ -321,10 +378,10 @@ query {{
         today_path = self.migrator.get_daily_note_path(self.today)
         if self.dry_run:
             print(f"\n  [dry-run] Would append ## Wrap-up to today's note")
-        elif note_summaries or github_summary:
+        elif note_summaries or github_summary or archived_stories:
             if today_path.exists():
                 print(f"\n✅ Writing Wrap-up to {today_path.name}...")
-                self.append_wrapup(today_path, note_summaries, github_summary, github_model)
+                self.append_wrapup(today_path, note_summaries, github_summary, github_model, archived_stories)
             else:
                 print(f"\n⚠️  Today's note not found at {today_path.name}, skipping write")
 
