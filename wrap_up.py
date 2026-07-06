@@ -140,6 +140,7 @@ class WrapUp:
             for event in events:
                 if event['type'] == 'PullRequestReviewEvent':
                     pr = event['payload'].get('pull_request', {})
+                    review_body = event['payload'].get('review', {}).get('body', '')
                     key = f"{event['repo']['name']}#{pr.get('number')}"
                     if key not in seen_reviews:
                         seen_reviews.add(key)
@@ -148,7 +149,11 @@ class WrapUp:
                                 'title': pr.get('title', ''),
                                 'number': pr.get('number'),
                                 'repository': {'nameWithOwner': event['repo']['name']},
-                            }
+                                'author': (pr.get('user') or {}).get('login', ''),
+                                'url': pr.get('html_url', ''),
+                                'headRefName': (pr.get('head') or {}).get('ref', ''),
+                            },
+                            'reviewBody': review_body,
                         })
 
             # Search queries for opened/merged PRs (accurate, not subject to events lag)
@@ -178,6 +183,11 @@ query {{
                 merged_prs = data['data']['mergedPRs']['nodes']
                 opened_prs = data['data']['openedPRs']['nodes']
 
+            for pr in merged_prs + opened_prs:
+                detail = self.fetch_pr_detail(pr['repository']['nameWithOwner'], pr['number'])
+                if detail:
+                    pr.update(detail)
+
             return {
                 'commitContributionsByRepository': commit_contributions,
                 'createdRepos': created_repos,
@@ -188,6 +198,53 @@ query {{
         except Exception as e:
             print(f"  Warning: GitHub activity fetch failed: {e}")
             return None
+
+    def fetch_pr_detail(self, repo, number):
+        """Fetch body, diffstat, author, url for a PR via gh pr view. Returns None on failure."""
+        try:
+            result = subprocess.run(
+                ["gh", "pr", "view", str(number), "--repo", repo,
+                 "--json", "body,additions,deletions,changedFiles,author,url,headRefName"],
+                capture_output=True, text=True, timeout=15
+            )
+            if result.returncode != 0:
+                return None
+            data = json.loads(result.stdout)
+            return {
+                'body': (data.get('body') or '').strip(),
+                'additions': data.get('additions', 0),
+                'deletions': data.get('deletions', 0),
+                'changedFiles': data.get('changedFiles', 0),
+                'author': (data.get('author') or {}).get('login', ''),
+                'url': data.get('url', ''),
+                'headRefName': data.get('headRefName', ''),
+            }
+        except Exception:
+            return None
+
+    def _pr_link(self, pr):
+        """Build a markdown link '[TICKET / Title -- Author](url)' for a PR dict."""
+        repo = pr['repository']['nameWithOwner']
+        number = pr['number']
+        url = pr.get('url') or f"https://github.com/{repo}/pull/{number}"
+
+        ticket = None
+        for source in (pr.get('headRefName', ''), pr.get('title', '')):
+            match = TICKET_RE.search(source or '')
+            if match:
+                ticket = match.group(1).upper()
+                break
+
+        title = pr.get('title', '')
+        if ticket:
+            title = re.sub(rf'^\[?{re.escape(ticket)}\]?[:\-/ ]*', '', title, flags=re.IGNORECASE).strip()
+
+        label = f"{ticket} / {title}" if ticket else title
+        author = pr.get('author')
+        if author:
+            label += f" -- {author}"
+
+        return f"[{repo}#{number}]({url}): {label}"
 
     def format_github_context(self, activity):
         lines = []
@@ -212,31 +269,41 @@ query {{
             lines.append("Pull requests opened:")
             for pr in opened_prs:
                 draft_tag = " [draft]" if pr.get('isDraft') else ""
-                lines.append(
-                    f"  - {pr['repository']['nameWithOwner']}"
-                    f"#{pr['number']}: {pr['title']}{draft_tag}"
-                )
+                lines.append(f"  - {self._pr_link(pr)}{draft_tag}")
+                lines.extend(self._format_pr_detail_lines(pr))
 
         merged_prs = activity.get('mergedPRs', [])
         if merged_prs:
             lines.append("Pull requests merged:")
             for pr in merged_prs:
-                lines.append(
-                    f"  - {pr['repository']['nameWithOwner']}"
-                    f"#{pr['number']}: {pr['title']}"
-                )
+                lines.append(f"  - {self._pr_link(pr)}")
+                lines.extend(self._format_pr_detail_lines(pr))
 
         reviews = activity.get('pullRequestReviewContributions', {}).get('nodes', [])
         if reviews:
             lines.append("Reviews:")
             for node in reviews:
                 pr = node['pullRequest']
-                lines.append(
-                    f"  - Reviewed {pr['repository']['nameWithOwner']}"
-                    f"#{pr['number']}: {pr['title']}"
-                )
+                lines.append(f"  - Reviewed {self._pr_link(pr)}")
+                review_body = (node.get('reviewBody') or '').strip()
+                if review_body:
+                    lines.append(f"      My comment: {review_body}")
 
         return '\n'.join(lines) if lines else None
+
+    def _format_pr_detail_lines(self, pr):
+        """Format optional diffstat/body lines for a PR dict enriched by fetch_pr_detail."""
+        lines = []
+        if 'changedFiles' in pr:
+            lines.append(
+                f"      {pr['changedFiles']} files changed, "
+                f"+{pr['additions']}/-{pr['deletions']}"
+            )
+        body = (pr.get('body') or '').strip()
+        if body:
+            snippet = body if len(body) <= 300 else body[:300] + "..."
+            lines.append(f"      Description: {snippet}")
+        return lines
 
     def find_story_note(self, ticket):
         """Find a story note file/folder for a ticket key, anywhere outside the archive."""
@@ -306,7 +373,7 @@ query {{
         if archived_stories:
             section += "\n**Stories archived (branch merged):**\n"
             for stem, pr in archived_stories:
-                section += f"- [[{stem}]] — {pr['repository']['nameWithOwner']}#{pr['number']}\n"
+                section += f"- [[{stem}]] — {self._pr_link(pr)}\n"
 
         all_models = list(dict.fromkeys(
             [m for _, _, m in note_summaries] + ([github_model] if github_model else [])
