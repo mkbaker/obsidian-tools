@@ -14,10 +14,12 @@ def call_llm(prompt, use_sonnet=False, use_claude=False, ollama_model=None, mode
     label = f"claude/{model}"
     print(f"  Using {label}")
 
+    env = {**os.environ, "CLAUDE_CONFIG_DIR": os.path.expanduser("~/.claude-personal")}
     result = subprocess.run(
         [os.path.expanduser("~/.claude/local/claude"), "-p", prompt, "--model", model, "--no-session-persistence"],
         capture_output=True,
         text=True,
+        env=env,
     )
 
     if result.returncode != 0:
