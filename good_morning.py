@@ -85,7 +85,10 @@ class GoodMorning:
             "If there is nothing substantive logged, say so in one bullet. "
             "Be concise and specific. "
             "Where applicable, use Obsidian wiki-link syntax to reference relevant notes — "
-            "for example, ticket IDs like [[FINC-3649]], people, or projects that likely have their own notes."
+            "for example, ticket IDs like [[FINC-3649]], people, or projects that likely have their own notes. "
+            "This is a one-shot summary generation task, not a conversation — "
+            "output only the summary bullets. Do not ask what I'd like help with, "
+            "do not offer options, and do not address me directly."
         )
         return call_llm(prompt)
 
@@ -98,7 +101,10 @@ class GoodMorning:
         prompt = (
             f"Here are my daily notes from last week:\n{combined}\n\n"
             "Summarize in 5-8 sentences: main themes, key accomplishments, "
-            "and items carried forward. Be concise and specific."
+            "and items carried forward. Be concise and specific. "
+            "This is a one-shot summary generation task, not a conversation — "
+            "output only the summary text itself. Do not ask what I'd like help with, "
+            "do not offer options, and do not address me directly."
         )
         return call_llm(prompt)
 
