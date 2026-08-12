@@ -19,6 +19,7 @@ TICKET_RE = re.compile(r'([A-Za-z]{2,}-\d+)')
 sys.path.insert(0, str(Path(__file__).parent))
 from todo_migrator import TodoMigrator
 from llm_utils import call_llm
+import git_utils
 
 
 class WrapUp:
@@ -36,8 +37,14 @@ class WrapUp:
         self.today = datetime.now()
 
     def find_edited_notes(self):
+        changed = git_utils.changed_md_files(self.vault_path)
+        if changed is not None:
+            return changed
+        return self._find_edited_notes_by_mtime()
+
+    def _find_edited_notes_by_mtime(self):
+        """Fallback for when the vault isn't a git repo."""
         today_date = self.today.date()
-        daily_note = self.migrator.get_daily_note_path(self.today).resolve()
         edited = []
         for p in self.vault_path.rglob("*.md"):
             if "4 ARCHIVE" in str(p):
@@ -50,18 +57,25 @@ class WrapUp:
         results = []
         for path in note_paths:
             stem = path.stem
-            print(f"  Summarizing [[{stem}]]...")
-            try:
-                content = path.read_text(encoding='utf-8')
-            except IOError as e:
-                print(f"  Warning: could not read {stem}: {e}")
+            content, is_diff = git_utils.diff_or_content(path, self.vault_path)
+            if not content or not content.strip():
                 continue
-            prompt = (
-                f"Here is an Obsidian note titled '{stem}':\n\n{content}\n\n"
-                "In 1-2 sentences, describe what this note is about. Be specific and concise. "
-                "Where applicable, use Obsidian wiki-link syntax [[like this]] to reference "
-                "tickets, people, or related notes mentioned in the content."
-            )
+            print(f"  Summarizing [[{stem}]]...")
+            if is_diff:
+                prompt = (
+                    f"Here is the git diff for an Obsidian note titled '{stem}' "
+                    f"(changes since the last commit):\n\n{content}\n\n"
+                    "In 1-2 sentences, describe what was added or changed. Be specific and concise. "
+                    "Where applicable, use Obsidian wiki-link syntax [[like this]] to reference "
+                    "tickets, people, or related notes mentioned in the content."
+                )
+            else:
+                prompt = (
+                    f"Here is an Obsidian note titled '{stem}':\n\n{content}\n\n"
+                    "In 1-2 sentences, describe what this note is about. Be specific and concise. "
+                    "Where applicable, use Obsidian wiki-link syntax [[like this]] to reference "
+                    "tickets, people, or related notes mentioned in the content."
+                )
             summary, model = call_llm(prompt, self.use_claude, self.use_sonnet, self.ollama_model, model="sonnet")
             results.append((stem, summary, model))
         return results
@@ -457,6 +471,16 @@ query {{
         if (is_friday or self.weekly) and not self.no_weekly:
             print(f"\n📅 Running weekly summary...")
             self.trigger_weekly_summary()
+
+        # Commit the day's vault changes
+        print(f"\n💾 Committing vault changes...")
+        if self.dry_run:
+            print("  [dry-run] Would commit vault changes")
+        else:
+            committed = git_utils.commit_all(
+                self.vault_path, f"Daily notes: {self.today.strftime('%Y-%m-%d')}"
+            )
+            print("  Committed" if committed else "  Nothing to commit")
 
         print("\n" + "=" * 60)
 
