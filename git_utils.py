@@ -2,6 +2,7 @@
 """Shared git helpers for the vault repo."""
 
 import subprocess
+from pathlib import Path
 
 ARCHIVE_DIR = "4 ARCHIVE"
 
@@ -18,19 +19,38 @@ def _run(args, vault_path):
 
 
 def changed_md_files(vault_path):
-    """Modified + untracked .md files outside the archive, per git status. None if not a repo."""
+    """Modified + untracked .md files, per git status (includes archived notes). None if not a repo.
+
+    A note moved to the archive with a plain file move (not `git mv`) shows up as a
+    deleted old path plus an untracked new path — git doesn't correlate those into a
+    rename. Match them by filename so the note surfaces once, at its archived path,
+    instead of looking deleted.
+    """
     if not is_repo(vault_path):
         return None
     result = _run(["status", "--porcelain", "--", "*.md"], vault_path)
     if result.returncode != 0:
         return None
-    files = []
+
+    entries = []
+    archived_names = set()
     for line in result.stdout.splitlines():
-        path_str = line[3:].strip('"')
-        path = vault_path / path_str
-        if ARCHIVE_DIR in path.parts:
+        code = line[:2]
+        path_str = line[3:]
+        if " -> " in path_str:
+            path_str = path_str.split(" -> ", 1)[1]
+        path_str = path_str.strip('"')
+        entries.append((code, path_str))
+        if code.strip() == "??" and ARCHIVE_DIR in Path(path_str).parts:
+            archived_names.add(Path(path_str).name)
+
+    files = []
+    for code, path_str in entries:
+        path = Path(path_str)
+        if (code.strip() == "D" and path.name in archived_names
+                and ARCHIVE_DIR not in path.parts):
             continue
-        files.append(path)
+        files.append(vault_path / path)
     return sorted(files)
 
 
