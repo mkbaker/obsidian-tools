@@ -15,6 +15,7 @@ from datetime import datetime
 from pathlib import Path
 
 TICKET_RE = re.compile(r'([A-Za-z]{2,}-\d+)')
+STORY_DIR_RE = re.compile(r'^[A-Za-z]{2,}-\d+$')
 
 sys.path.insert(0, str(Path(__file__).parent))
 from todo_migrator import TodoMigrator
@@ -52,35 +53,99 @@ class WrapUp:
         return sorted(edited)
 
     def summarize_notes(self, note_paths):
+        story_groups, standalone = self._group_by_story(note_paths)
+
         results = []
-        for path in note_paths:
-            stem = path.stem
-            if "4 ARCHIVE" in path.parts:
-                print(f"  [[{stem}]] is archived, skipping summary")
-                results.append((stem, "Archived.", None))
-                continue
+        for folder, paths in story_groups.items():
+            result = self._summarize_story_group(folder, paths)
+            if result:
+                results.append(result)
+        for path in standalone:
+            result = self._summarize_single_note(path)
+            if result:
+                results.append(result)
+        return results
+
+    def _group_by_story(self, note_paths):
+        """Split edited notes into ticket-named story folders vs. standalone notes.
+
+        A "story folder" is a directory whose name is exactly a ticket key
+        (e.g. `Stories/FINC-3791/`), containing an Overview note plus one note
+        per bug/to-do found during agentic review. Those get summarized as a
+        single story-level update rather than one bullet per sub-note.
+        """
+        story_groups = {}
+        standalone = []
+        for p in note_paths:
+            if STORY_DIR_RE.match(p.parent.name):
+                story_groups.setdefault(p.parent, []).append(p)
+            else:
+                standalone.append(p)
+        return story_groups, standalone
+
+    def _summarize_single_note(self, path):
+        stem = path.stem
+        if "4 ARCHIVE" in path.parts:
+            print(f"  [[{stem}]] is archived, skipping summary")
+            return (stem, "Archived.", None)
+        content, is_diff = git_utils.diff_or_content(path, self.vault_path)
+        if not content or not content.strip():
+            return None
+        print(f"  Summarizing [[{stem}]]...")
+        if is_diff:
+            prompt = (
+                f"Here is the git diff for an Obsidian note titled '{stem}' "
+                f"(changes since the last commit):\n\n{content}\n\n"
+                "In 1-2 sentences, describe what was added or changed. Be specific and concise. "
+                "Where applicable, use Obsidian wiki-link syntax [[like this]] to reference "
+                "tickets, people, or related notes mentioned in the content."
+            )
+        else:
+            prompt = (
+                f"Here is an Obsidian note titled '{stem}':\n\n{content}\n\n"
+                "In 1-2 sentences, describe what this note is about. Be specific and concise. "
+                "Where applicable, use Obsidian wiki-link syntax [[like this]] to reference "
+                "tickets, people, or related notes mentioned in the content."
+            )
+        summary, model = call_llm(prompt, self.use_claude, self.use_sonnet, self.ollama_model, model="sonnet")
+        return (stem, summary, model)
+
+    def _summarize_story_group(self, folder, paths):
+        """Summarize all edited notes under one ticket story folder as a single
+        story-progress update, instead of one bullet per sub-note/bug file."""
+        if "4 ARCHIVE" in folder.parts:
+            print(f"  [[{folder.name}]] story is archived, skipping summary")
+            return (folder.name, "Archived.", None)
+
+        sections = []
+        for path in sorted(paths):
             content, is_diff = git_utils.diff_or_content(path, self.vault_path)
             if not content or not content.strip():
                 continue
-            print(f"  Summarizing [[{stem}]]...")
-            if is_diff:
-                prompt = (
-                    f"Here is the git diff for an Obsidian note titled '{stem}' "
-                    f"(changes since the last commit):\n\n{content}\n\n"
-                    "In 1-2 sentences, describe what was added or changed. Be specific and concise. "
-                    "Where applicable, use Obsidian wiki-link syntax [[like this]] to reference "
-                    "tickets, people, or related notes mentioned in the content."
-                )
-            else:
-                prompt = (
-                    f"Here is an Obsidian note titled '{stem}':\n\n{content}\n\n"
-                    "In 1-2 sentences, describe what this note is about. Be specific and concise. "
-                    "Where applicable, use Obsidian wiki-link syntax [[like this]] to reference "
-                    "tickets, people, or related notes mentioned in the content."
-                )
-            summary, model = call_llm(prompt, self.use_claude, self.use_sonnet, self.ollama_model, model="sonnet")
-            results.append((stem, summary, model))
-        return results
+            label = "diff since last commit" if is_diff else "full content"
+            sections.append(f"### {path.stem} ({label})\n{content}")
+
+        if not sections:
+            return None
+
+        print(f"  Summarizing story [[{folder.name}]] ({len(sections)} changed note(s))...")
+
+        overview_stem = next((p.stem for p in paths if "overview" in p.stem.lower()), None)
+        link_stem = overview_stem or folder.name
+
+        combined = "\n\n".join(sections)
+        prompt = (
+            f"Here are today's changes across notes in the '{folder.name}' story folder in "
+            f"Obsidian (an agentic code-review tracker: one Overview note plus one note per "
+            f"bug/to-do found for this ticket):\n\n{combined}\n\n"
+            "In 2-4 sentences, give ONE consolidated status update for the story as a whole: "
+            "what got fixed/resolved today, what's still open or blocking, and any new "
+            "bugs/to-dos found. Do NOT summarize each note individually or go file-by-file. "
+            "Be specific and concise. Where applicable, use Obsidian wiki-link syntax "
+            "[[like this]] to reference tickets, people, or related notes mentioned in the content."
+        )
+        summary, model = call_llm(prompt, self.use_claude, self.use_sonnet, self.ollama_model, model="sonnet")
+        return (link_stem, summary, model)
 
     def fetch_github_activity(self):
         date_str = self.today.strftime("%Y-%m-%d")
