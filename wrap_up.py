@@ -16,6 +16,8 @@ from pathlib import Path
 
 TICKET_RE = re.compile(r'([A-Za-z]{2,}-\d+)')
 STORY_DIR_RE = re.compile(r'^[A-Za-z]{2,}-\d+$')
+PAPERCUT_LINE_RE = re.compile(r'^-?\s*(\d{4}-\d{2}-\d{2})\s*·\s*(.+)$')
+PAPERCUTS_PATH = Path.home() / "code" / "papercuts.md"
 
 sys.path.insert(0, str(Path(__file__).parent))
 from todo_migrator import TodoMigrator
@@ -146,6 +148,19 @@ class WrapUp:
         )
         summary, model = call_llm(prompt, self.use_claude, self.use_sonnet, self.ollama_model, model="sonnet")
         return (link_stem, summary, model)
+
+    def fetch_todays_papercuts(self):
+        """Return today's entries from the global ~/code/papercuts.md log, if any."""
+        if not PAPERCUTS_PATH.exists():
+            return []
+
+        today_str = self.today.strftime("%Y-%m-%d")
+        entries = []
+        for line in PAPERCUTS_PATH.read_text(encoding='utf-8').splitlines():
+            match = PAPERCUT_LINE_RE.match(line.strip())
+            if match and match.group(1) == today_str:
+                entries.append(match.group(2).strip())
+        return entries
 
     def fetch_github_activity(self):
         date_str = self.today.strftime("%Y-%m-%d")
@@ -435,7 +450,7 @@ query {{
         )
         return call_llm(prompt, self.use_claude, self.use_sonnet, self.ollama_model, model="sonnet")
 
-    def append_wrapup(self, today_path, note_summaries, github_summary, github_model, archived_stories=None):
+    def append_wrapup(self, today_path, note_summaries, github_summary, github_model, archived_stories=None, papercuts=None):
         content = today_path.read_text(encoding='utf-8')
         if '## Wrap-up' in content:
             print("  ## Wrap-up already exists in today's note, skipping")
@@ -455,6 +470,11 @@ query {{
             section += "\n**Stories archived (branch merged):**\n"
             for stem, pr in archived_stories:
                 section += f"- [[{stem}]] — {self._pr_link(pr)}\n"
+
+        if papercuts:
+            section += "\n**Papercuts logged today:**\n"
+            for entry in papercuts:
+                section += f"- {entry}\n"
 
         all_models = list(dict.fromkeys(
             [m for _, _, m in note_summaries if m] + ([github_model] if github_model else [])
@@ -522,14 +542,22 @@ query {{
             else:
                 print("  GitHub activity unavailable, skipping")
 
+        # Papercuts logged today
+        print("\n🩹 Checking papercuts log...")
+        papercuts = self.fetch_todays_papercuts()
+        if papercuts:
+            print(f"  Found {len(papercuts)} entr{'y' if len(papercuts) == 1 else 'ies'}")
+        else:
+            print("  None found")
+
         # Append wrap-up to daily note
         today_path = self.migrator.get_daily_note_path(self.today)
         if self.dry_run:
             print(f"\n  [dry-run] Would append ## Wrap-up to today's note")
-        elif note_summaries or github_summary or archived_stories:
+        elif note_summaries or github_summary or archived_stories or papercuts:
             if today_path.exists():
                 print(f"\n✅ Writing Wrap-up to {today_path.name}...")
-                self.append_wrapup(today_path, note_summaries, github_summary, github_model, archived_stories)
+                self.append_wrapup(today_path, note_summaries, github_summary, github_model, archived_stories, papercuts)
             else:
                 print(f"\n⚠️  Today's note not found at {today_path.name}, skipping write")
 
