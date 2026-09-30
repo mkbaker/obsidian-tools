@@ -401,14 +401,17 @@ query {{
             lines.append(f"      Description: {snippet}")
         return lines
 
-    def find_story_note(self, ticket):
-        """Find a story note file/folder for a ticket key, anywhere outside the archive."""
+    def find_story_notes(self, ticket):
+        """Find all story note files/folders for a ticket key, anywhere outside the archive.
+        Paths nested inside another match (e.g. notes inside a story folder) are skipped,
+        since moving the parent folder carries them along."""
+        matches = set()
         for pattern in (ticket, ticket.lower()):
             for p in self.vault_path.rglob(f"{pattern}*"):
                 if "4 ARCHIVE" in str(p):
                     continue
-                return p
-        return None
+                matches.add(p)
+        return sorted(p for p in matches if not any(m in p.parents for m in matches))
 
     def archive_merged_stories(self, merged_prs):
         """Move story notes whose ticket matches a branch merged today into 4 ARCHIVE/Stories."""
@@ -422,22 +425,19 @@ query {{
                 continue
             ticket = match.group(1).upper()
 
-            note_path = self.find_story_note(ticket)
-            if not note_path:
-                continue
+            for note_path in self.find_story_notes(ticket):
+                dest = dest_dir / note_path.name
+                if dest.exists():
+                    continue
 
-            dest = dest_dir / note_path.name
-            if dest.exists():
-                continue
+                if self.dry_run:
+                    print(f"  [dry-run] Would archive [[{note_path.stem}]] ({note_path.name}, branch {branch} merged)")
+                else:
+                    dest_dir.mkdir(parents=True, exist_ok=True)
+                    shutil.move(str(note_path), str(dest))
+                    print(f"  📦 Archived [[{note_path.stem}]] (branch {branch} merged)")
 
-            if self.dry_run:
-                print(f"  [dry-run] Would archive [[{note_path.stem}]] ({note_path.name}, branch {branch} merged)")
-            else:
-                dest_dir.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(note_path), str(dest))
-                print(f"  📦 Archived [[{note_path.stem}]] (branch {branch} merged)")
-
-            archived.append((note_path.stem, pr))
+                archived.append((note_path.stem, pr))
 
         return archived
 
