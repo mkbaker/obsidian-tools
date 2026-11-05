@@ -17,12 +17,13 @@ from llm_utils import call_llm
 
 class WeeklySummary:
     def __init__(self, vault_path="Desktop/obsidian_vault", week_spec=None,
-                 use_claude=False, use_sonnet=False, ollama_model=None, dry_run=False):
+                 use_claude=False, use_sonnet=False, ollama_model=None, dry_run=False, use_haiku=False):
         self.vault_path = Path.home() / vault_path
         self.migrator = TodoMigrator(vault_path)
         self.week_spec = week_spec
         self.use_claude = use_claude
         self.use_sonnet = use_sonnet
+        self.model = "haiku" if use_haiku else "sonnet"
         self.ollama_model = ollama_model
         self.dry_run = dry_run
 
@@ -66,7 +67,7 @@ class WeeklySummary:
             "Where applicable, use Obsidian wiki-link syntax [[like this]] to reference "
             "ticket IDs, people, projects, or other notes mentioned in the content."
         )
-        return call_llm(prompt, self.use_claude, self.use_sonnet, self.ollama_model, model="sonnet")
+        return call_llm(prompt, self.use_claude, self.use_sonnet, self.ollama_model, model=self.model)
 
     def write_summary(self, monday, summary_text, model_label):
         filename = f"Weekly Summary {monday.strftime('%Y-%m-%d')}.md"
@@ -125,9 +126,12 @@ Examples:
     parser.add_argument("--week", dest="week_spec",
                         help="Week to summarize: current (default), last, or YYYY-MM-DD")
     parser.add_argument("--use-claude", action="store_true",
-                        help="Force Claude Haiku instead of ollama")
-    parser.add_argument("--use-sonnet", action="store_true",
-                        help="Force Claude Sonnet")
+                        help="No effect: Claude is always used (see --use-haiku)")
+    model_group = parser.add_mutually_exclusive_group()
+    model_group.add_argument("--use-haiku", action="store_true",
+                             help="Use Claude Haiku instead of the default, Sonnet")
+    model_group.add_argument("--use-sonnet", action="store_true",
+                             help="Use Claude Sonnet (the default)")
     parser.add_argument("--ollama-model", help="Pin a specific ollama model")
     parser.add_argument("--dry-run", action="store_true",
                         help="Show plan without writing files")
@@ -139,6 +143,7 @@ Examples:
             week_spec=args.week_spec,
             use_claude=args.use_claude,
             use_sonnet=args.use_sonnet,
+            use_haiku=args.use_haiku,
             ollama_model=args.ollama_model,
             dry_run=args.dry_run,
         )

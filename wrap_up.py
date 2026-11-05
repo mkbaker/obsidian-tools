@@ -27,15 +27,18 @@ import git_utils
 
 class WrapUp:
     def __init__(self, vault_path="Desktop/obsidian_vault", use_claude=False, use_sonnet=False,
-                 ollama_model=None, dry_run=False, weekly=False, no_weekly=False):
+                 ollama_model=None, dry_run=False, weekly=False, no_weekly=False, use_haiku=False,
+                 summarize=False):
         self.vault_path_arg = vault_path
         self.vault_path = Path.home() / vault_path
         self.use_claude = use_claude
         self.use_sonnet = use_sonnet
+        self.model = "haiku" if use_haiku else "sonnet"
         self.ollama_model = ollama_model
         self.dry_run = dry_run
         self.weekly = weekly
         self.no_weekly = no_weekly
+        self.summarize = summarize
         self.migrator = TodoMigrator(vault_path)
         self.today = datetime.now()
 
@@ -53,6 +56,22 @@ class WrapUp:
             if datetime.fromtimestamp(p.stat().st_mtime).date() == today_date:
                 edited.append(p)
         return sorted(edited)
+
+    def list_notes(self, note_paths):
+        """Wrap-up entries for edited notes with no LLM summary, just flagging archived ones."""
+        daily_note = self.migrator.get_daily_note_path(self.today)
+        notes = [p for p in note_paths if p.exists() and p != daily_note]
+        story_groups, standalone = self._group_by_story(notes)
+
+        results = []
+        for folder, paths in story_groups.items():
+            if "4 ARCHIVE" in folder.parts:
+                results.append((folder.name, "Archived.", None))
+            else:
+                results.append((self._story_link_stem(folder, paths), None, None))
+        for path in standalone:
+            results.append((path.stem, "Archived." if "4 ARCHIVE" in path.parts else None, None))
+        return results
 
     def summarize_notes(self, note_paths):
         story_groups, standalone = self._group_by_story(note_paths)
@@ -85,6 +104,10 @@ class WrapUp:
                 standalone.append(p)
         return story_groups, standalone
 
+    def _story_link_stem(self, folder, paths):
+        overview_stem = next((p.stem for p in paths if "overview" in p.stem.lower()), None)
+        return overview_stem or folder.name
+
     def _summarize_single_note(self, path):
         stem = path.stem
         if "4 ARCHIVE" in path.parts:
@@ -109,7 +132,7 @@ class WrapUp:
                 "Where applicable, use Obsidian wiki-link syntax [[like this]] to reference "
                 "tickets, people, or related notes mentioned in the content."
             )
-        summary, model = call_llm(prompt, self.use_claude, self.use_sonnet, self.ollama_model, model="sonnet")
+        summary, model = call_llm(prompt, self.use_claude, self.use_sonnet, self.ollama_model, model=self.model)
         return (stem, summary, model)
 
     def _summarize_story_group(self, folder, paths):
@@ -132,8 +155,7 @@ class WrapUp:
 
         print(f"  Summarizing story [[{folder.name}]] ({len(sections)} changed note(s))...")
 
-        overview_stem = next((p.stem for p in paths if "overview" in p.stem.lower()), None)
-        link_stem = overview_stem or folder.name
+        link_stem = self._story_link_stem(folder, paths)
 
         combined = "\n\n".join(sections)
         prompt = (
@@ -146,7 +168,7 @@ class WrapUp:
             "Be specific and concise. Where applicable, use Obsidian wiki-link syntax "
             "[[like this]] to reference tickets, people, or related notes mentioned in the content."
         )
-        summary, model = call_llm(prompt, self.use_claude, self.use_sonnet, self.ollama_model, model="sonnet")
+        summary, model = call_llm(prompt, self.use_claude, self.use_sonnet, self.ollama_model, model=self.model)
         return (link_stem, summary, model)
 
     def fetch_todays_papercuts(self):
@@ -448,7 +470,7 @@ query {{
             "Where applicable, use Obsidian wiki-link syntax [[like this]] to reference "
             "tickets, repos, or projects that likely have their own notes."
         )
-        return call_llm(prompt, self.use_claude, self.use_sonnet, self.ollama_model, model="sonnet")
+        return call_llm(prompt, self.use_claude, self.use_sonnet, self.ollama_model, model=self.model)
 
     def append_wrapup(self, today_path, note_summaries, github_summary, github_model, archived_stories=None, papercuts=None):
         content = today_path.read_text(encoding='utf-8')
@@ -461,7 +483,7 @@ query {{
         if note_summaries:
             section += "\n**Notes edited today:**\n"
             for stem, summary, _ in note_summaries:
-                section += f"- [[{stem}]] — {summary}\n"
+                section += f"- [[{stem}]] — {summary}\n" if summary else f"- [[{stem}]]\n"
 
         if github_summary:
             section += f"\n**GitHub activity:**\n{github_summary}\n"
@@ -491,6 +513,8 @@ query {{
             cmd.append("--use-claude")
         if self.use_sonnet:
             cmd.append("--use-sonnet")
+        if self.model == "haiku":
+            cmd.append("--use-haiku")
         if self.ollama_model:
             cmd += ["--ollama-model", self.ollama_model]
         if self.dry_run:
@@ -502,14 +526,16 @@ query {{
         print(f" Wrap-up! {self.today.strftime('%A, %B %d')}")
         print("=" * 60)
 
-        # Find and summarize edited notes
+        # Find edited notes
         print("\n📝 Finding edited notes...")
         edited_notes = self.find_edited_notes()
         note_summaries = []
 
         if edited_notes:
             print(f"  Found: {', '.join(p.stem for p in edited_notes)}")
-            if self.dry_run:
+            if not self.summarize:
+                note_summaries = self.list_notes(edited_notes)
+            elif self.dry_run:
                 print(f"  [dry-run] Would summarize {len(edited_notes)} notes")
             else:
                 note_summaries = self.summarize_notes(edited_notes)
@@ -588,10 +614,15 @@ def main():
                         help="Force weekly summary regardless of day")
     parser.add_argument("--no-weekly", action="store_true",
                         help="Skip weekly summary even on Friday")
+    parser.add_argument("--summarize", action="store_true",
+                        help="Summarize edited notes with the LLM instead of just listing them")
     parser.add_argument("--use-claude", action="store_true",
-                        help="Force Claude Haiku instead of ollama")
-    parser.add_argument("--use-sonnet", action="store_true",
-                        help="Force Claude Sonnet")
+                        help="No effect: Claude is always used (see --use-haiku)")
+    model_group = parser.add_mutually_exclusive_group()
+    model_group.add_argument("--use-haiku", action="store_true",
+                             help="Use Claude Haiku instead of the default, Sonnet")
+    model_group.add_argument("--use-sonnet", action="store_true",
+                             help="Use Claude Sonnet (the default)")
     parser.add_argument("--ollama-model", help="Pin a specific ollama model")
     parser.add_argument("--dry-run", action="store_true",
                         help="Show plan without making changes")
@@ -602,10 +633,12 @@ def main():
             vault_path=args.vault_path,
             use_claude=args.use_claude,
             use_sonnet=args.use_sonnet,
+            use_haiku=args.use_haiku,
             ollama_model=args.ollama_model,
             dry_run=args.dry_run,
             weekly=args.weekly,
             no_weekly=args.no_weekly,
+            summarize=args.summarize,
         )
         wu.run()
     except KeyboardInterrupt:
