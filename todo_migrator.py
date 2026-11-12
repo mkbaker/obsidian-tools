@@ -138,8 +138,12 @@ class TodoMigrator:
         # Create the daily notes directory if it doesn't exist
         self.daily_notes_path.mkdir(parents=True, exist_ok=True)
 
-        # Basic template for new daily note
-        template = f"""# {datetime.now().strftime('%Y-%m-%d')}
+        # Use the vault's daily note template so every creation path matches
+        template_path = self.daily_notes_path / "Template.md"
+        if template_path.exists():
+            template = template_path.read_text(encoding='utf-8')
+        else:
+            template = f"""# {datetime.now().strftime('%Y-%m-%d')}
 
 ## To do
 
@@ -179,6 +183,15 @@ class TodoMigrator:
             print(f"Warning: No 'To do' section found in {note_path.name}")
             return False
 
+        # Drop the template's empty "- [ ] " placeholder(s) in the To do section
+        if todo_groups:
+            i = todo_section_line + 1
+            while i < len(lines) and not re.match(r'^#{1,2}\s+', lines[i]):
+                if re.match(r'^\s*- \[ \]\s*$', lines[i]):
+                    del lines[i]
+                else:
+                    i += 1
+
         # Find where to insert (after the ## To do line and any existing todos)
         insert_line = todo_section_line + 1
 
@@ -209,6 +222,10 @@ class TodoMigrator:
             # Add a blank line before if there are existing todos
             if insert_line > todo_section_line + 1 and lines[insert_line - 1].strip():
                 migrated_lines.insert(0, "")
+
+            # Keep a blank line between the todos and a following heading
+            if insert_line < len(lines) and lines[insert_line].startswith('#'):
+                migrated_lines.append("")
 
             # Insert the new todos
             for i, todo_line in enumerate(migrated_lines):
