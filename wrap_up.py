@@ -121,16 +121,20 @@ class WrapUp:
             prompt = (
                 f"Here is the git diff for an Obsidian note titled '{stem}' "
                 f"(changes since the last commit):\n\n{content}\n\n"
-                "In 1-2 sentences, describe what was added or changed. Be specific and concise. "
-                "Where applicable, use Obsidian wiki-link syntax [[like this]] to reference "
-                "tickets, people, or related notes mentioned in the content."
+                "The reader is the person who wrote the note and only needs a memory jog. "
+                "Output ONE sentence fragment, 12 words or fewer, saying what was added or changed. "
+                "No full sentences, no explanation. "
+                "Use Obsidian wiki-link syntax [[like this]] for tickets, people, or related notes. "
+                "Output only the fragment."
             )
         else:
             prompt = (
                 f"Here is an Obsidian note titled '{stem}':\n\n{content}\n\n"
-                "In 1-2 sentences, describe what this note is about. Be specific and concise. "
-                "Where applicable, use Obsidian wiki-link syntax [[like this]] to reference "
-                "tickets, people, or related notes mentioned in the content."
+                "The reader is the person who wrote the note and only needs a memory jog. "
+                "Output ONE sentence fragment, 12 words or fewer, saying what this note is about. "
+                "No full sentences, no explanation. "
+                "Use Obsidian wiki-link syntax [[like this]] for tickets, people, or related notes. "
+                "Output only the fragment."
             )
         summary, model = call_llm(prompt, self.use_claude, self.use_sonnet, self.ollama_model, model=self.model)
         return (stem, summary, model)
@@ -162,11 +166,12 @@ class WrapUp:
             f"Here are today's changes across notes in the '{folder.name}' story folder in "
             f"Obsidian (an agentic code-review tracker: one Overview note plus one note per "
             f"bug/to-do found for this ticket):\n\n{combined}\n\n"
-            "In 2-4 sentences, give ONE consolidated status update for the story as a whole: "
-            "what got fixed/resolved today, what's still open or blocking, and any new "
-            "bugs/to-dos found. Do NOT summarize each note individually or go file-by-file. "
-            "Be specific and concise. Where applicable, use Obsidian wiki-link syntax "
-            "[[like this]] to reference tickets, people, or related notes mentioned in the content."
+            "The reader is the person who did the work and only needs a memory jog. "
+            "Give ONE consolidated status for the story as sentence fragments, 20 words or fewer total, "
+            "in the form 'fixed X; open: Y; new: Z' (omit empty parts). "
+            "Do NOT summarize each note individually or go file-by-file. No explanation. "
+            "Use Obsidian wiki-link syntax [[like this]] for tickets, people, or related notes. "
+            "Output only the fragments."
         )
         summary, model = call_llm(prompt, self.use_claude, self.use_sonnet, self.ollama_model, model=self.model)
         return (link_stem, summary, model)
@@ -466,9 +471,11 @@ query {{
     def summarize_github(self, activity_text):
         prompt = (
             f"Here is my GitHub activity for today:\n\n{activity_text}\n\n"
-            "Summarize as 3-5 bullet points what I worked on. Be concise and specific. "
-            "Where applicable, use Obsidian wiki-link syntax [[like this]] to reference "
-            "tickets, repos, or projects that likely have their own notes."
+            "The reader is the person who did the work and only needs a memory jog, not context or explanation. "
+            "Summarize as max 4 bullets, each 12 words or fewer, sentence fragments only, "
+            "format '- **Label:** fragment'. Merge related items. Include ticket/PR numbers. "
+            "Use Obsidian wiki-link syntax [[like this]] for tickets, repos, or projects. "
+            "Output only the bullets."
         )
         return call_llm(prompt, self.use_claude, self.use_sonnet, self.ollama_model, model=self.model)
 

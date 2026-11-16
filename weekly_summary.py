@@ -62,10 +62,14 @@ class WeeklySummary:
             combined += f"\n\n### {date.strftime('%A, %B %d')}\n{notes_by_date[date]}"
         prompt = (
             f"Here are my daily notes from this week:\n{combined}\n\n"
-            "Summarize in 5-8 sentences: main themes, key accomplishments, "
-            "and items carried forward. Be concise and specific. "
-            "Where applicable, use Obsidian wiki-link syntax [[like this]] to reference "
-            "ticket IDs, people, projects, or other notes mentioned in the content."
+            "The reader is the person who did the work and only needs a memory jog, not context or explanation. "
+            "Summarize as a terse bullet list with two groups. Format exactly:\n"
+            "- **Shipped:** fragment; fragment; fragment\n"
+            "- **Carried over:** fragment; fragment; fragment\n"
+            "Rules: max 6 fragments per group, each 8 words or fewer, no full sentences, "
+            "no explanations or rationale. Include ticket/PR numbers. "
+            "Use Obsidian wiki-link syntax [[like this]] for ticket IDs, people, projects, or notes. "
+            "Output only the two bullets."
         )
         return call_llm(prompt, self.use_claude, self.use_sonnet, self.ollama_model, model=self.model)
 
