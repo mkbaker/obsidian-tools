@@ -79,15 +79,18 @@ class GoodMorning:
         prompt = (
             f"Here is my daily note from {date.strftime('%A, %B %d, %Y')}:\n\n"
             f"{stripped}\n\n"
-            "Summarize as 3-5 bullet points what was actually worked on or completed that day. "
+            "Summarize what was worked on or completed that day as a terse bullet list. "
+            "The reader is the person who did the work and only needs a memory jog, not context or explanation. "
+            "Rules: max 5 bullets, each 12 words or fewer, sentence fragments only (no full sentences). "
+            "Format: '- **Label:** fragment'. Merge related items into one bullet. "
+            "Include ticket/PR numbers but no explanations, caveats, or rationale. "
+            "Example: '- **Papercut logged:** `yarn install` 401 -- turn off Cloudflare WARP'. "
             "Focus only on work logged in this note (meeting notes, wrap-up, ideas, etc.) — "
             "do NOT include anything from a Morning Brief or prior-day recap. "
-            "If there is nothing substantive logged, say so in one bullet. "
-            "Be concise and specific. "
-            "Where applicable, use Obsidian wiki-link syntax to reference relevant notes — "
-            "for example, ticket IDs like [[FINC-3649]], people, or projects that likely have their own notes. "
+            "If there is nothing substantive logged, output one bullet saying so. "
+            "Use Obsidian wiki-link syntax for ticket IDs and projects, e.g. [[FINC-3649]]. "
             "This is a one-shot summary generation task, not a conversation — "
-            "output only the summary bullets. Do not ask what I'd like help with, "
+            "output only the bullets. Do not ask what I'd like help with, "
             "do not offer options, and do not address me directly."
         )
         return call_llm(prompt)
@@ -100,10 +103,15 @@ class GoodMorning:
                 combined += f"\n\n### {date.strftime('%A, %B %d')}\n{stripped}"
         prompt = (
             f"Here are my daily notes from last week:\n{combined}\n\n"
-            "Summarize in 5-8 sentences: main themes, key accomplishments, "
-            "and items carried forward. Be concise and specific. "
+            "Summarize as a terse bullet list with two groups. "
+            "The reader is the person who did the work and only needs a memory jog, not context or explanation. "
+            "Format exactly:\n"
+            "- **Shipped:** fragment; fragment; fragment\n"
+            "- **Carried over:** fragment; fragment; fragment\n"
+            "Rules: max 5 fragments per group, each 8 words or fewer, no full sentences, "
+            "no explanations or rationale. Include ticket/PR numbers. "
             "This is a one-shot summary generation task, not a conversation — "
-            "output only the summary text itself. Do not ask what I'd like help with, "
+            "output only the two bullets. Do not ask what I'd like help with, "
             "do not offer options, and do not address me directly."
         )
         return call_llm(prompt)
@@ -129,7 +137,7 @@ class GoodMorning:
         if day_summary:
             brief += f"**Yesterday ([[{prev_date.strftime('%Y-%m-%d')}|{prev_date.strftime('%a %b %d')}]]):**\n{day_summary}\n"
         if week_summary:
-            brief += f"\n**Last week:** {week_summary}\n"
+            brief += f"\n**Last week:**\n{week_summary}\n"
 
         if day_model and week_model and week_model != day_model:
             models_label = f"{day_model}, {week_model}"
